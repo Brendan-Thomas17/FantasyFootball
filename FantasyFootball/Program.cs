@@ -1,4 +1,6 @@
-﻿using System.Data.SQLite;
+﻿using IronXL;
+using System.Data.Entity.Core.Common.CommandTrees.ExpressionBuilder;
+using System.Data.SQLite;
 
 namespace SQLiteTest
 {
@@ -11,28 +13,75 @@ namespace SQLiteTest
         {
             Console.WriteLine("Good day");
             bool createDB = false;
+            bool createDummy = false;
+            bool createUserData = false;
             while (true)
             {
-                Console.WriteLine("Recreate database? Yes or No.");
+                Console.WriteLine("Recreate database with dummy data? Yes or No.");
                 string input = Console.ReadLine() ?? "";
                 if (input.Equals("yes", StringComparison.OrdinalIgnoreCase))
                 {
                     File.Delete("database.db");
                     createDB = true;
+                    createDummy = true;
                     break;
                 }
                 else if (input.ToLower() == "no")
                 {
+                    while (true)
+                    {
+                        Console.WriteLine("Recreate database with your data? Yes or No.");
+                        input = Console.ReadLine() ?? "";
+                        if (input.Equals("yes", StringComparison.OrdinalIgnoreCase))
+                        {
+                            File.Delete("database.db");
+                            createDB = true;
+                            createUserData = true;
+                            break;
+                        }
+                        else if (input.ToLower() == "no")
+                        {
+                            break;
+                        }
+                    }
                     break;
                 }
             }
 
             using SQLiteConnection connection = createConnection();
-            if (createDB)
+            if (createDB || createUserData)
             {
                 createTables(connection);
+            }
+            if (createDummy)
+            {
                 insertDummyData(connection);
             }
+            if (createUserData)
+            {
+                string input = "";
+                Console.WriteLine("Recreate players with your data? Yes or No.");
+                input = Console.ReadLine() ?? "";
+                if (input.Equals("yes", StringComparison.OrdinalIgnoreCase))
+                {
+                    readInUserPlayersFile(connection);
+                }
+
+                Console.WriteLine("Recreate clubs with your data? Yes or No.");
+                input = Console.ReadLine() ?? "";
+                if (input.Equals("yes", StringComparison.OrdinalIgnoreCase))
+                {
+                    readInUserClubsFile(connection);
+                }
+
+                Console.WriteLine("Recreate which club players are in with your data? Yes or No.");
+                input = Console.ReadLine() ?? "";
+                if (input.Equals("yes", StringComparison.OrdinalIgnoreCase))
+                {
+                    readInUserClubPlayersFile(connection);
+                }
+            }
+
             while (true)
             {
                 Console.WriteLine("");
@@ -82,6 +131,191 @@ namespace SQLiteTest
 
             return connection;
         }
+        private static void readInUserPlayersFile(SQLiteConnection connection)
+        {
+            Console.WriteLine("");
+            Console.WriteLine("Please provide the file path to you Players file, accepted file types (.xlsx,.xls,.csv) ");
+            string filePath = Console.ReadLine() ?? "";
+            if (filePath.Length > 0)
+            {
+                string fileExt = System.IO.Path.GetExtension(filePath);
+                if (fileExt == ".xlsx" || fileExt == ".xls" || fileExt == ".csv")
+                {
+                    WorkBook workBook = WorkBook.Load(filePath);
+                    WorkSheet workSheet = workBook.WorkSheets.First();
+                    int playerNameCol = 0;
+                    int playerPointsCol = 1;
+                    int playerPriceCol = 2;
+                    var first = workSheet["A1:Z1"].Rows[0];
+
+                    if (first.Columns.Any(a => a.Value.ToString() == "PlayerName"))
+                    {
+                        playerNameCol = first.Columns.Where(w => w.Value.ToString() == "PlayerName").Select(c => c.ColumnNumber).FirstOrDefault();
+                    }
+                    if (first.Columns.Any(a => a.Value.ToString() == "Points"))
+                    {
+                        playerPointsCol = first.Columns.Where(w => w.Value.ToString() == "Points").Select(c => c.ColumnNumber).FirstOrDefault();
+                    }
+                    if (first.Columns.Any(a => a.Value.ToString() == "Price"))
+                    {
+                        playerPriceCol = first.Columns.Where(w => w.Value.ToString() == "Price").Select(c => c.ColumnNumber).FirstOrDefault();
+                    }
+                    foreach (RangeRow row in workSheet.Rows)
+                    {
+                        if (row.Columns[playerNameCol].Value.ToString() == "PlayerName" || row.Columns[playerPointsCol].Value.ToString() == "Points" || row.Columns[playerPriceCol].Value.ToString() == "Price")
+                        {
+                            continue;
+                        }
+                        Console.WriteLine("PlayerName '{0}' has {1} points and costs: {2}", row.Columns[playerNameCol], row.Columns[playerPointsCol], row.Columns[playerPriceCol]);
+                        insertPlayer(connection, row.Columns[playerNameCol].Value.ToString(), Convert.ToDouble(row.Columns[playerPointsCol].Value), Convert.ToInt32(row.Columns[playerPriceCol].Value));
+                    }
+                }
+            }
+        }
+        private static void readInUserClubsFile(SQLiteConnection connection)
+        {
+            Console.WriteLine("");
+            Console.WriteLine("Please provide the file path to you Clubs file, accepted file types (.xlsx,.xls,.csv) ");
+            string filePath = Console.ReadLine() ?? "";
+            if (filePath.Length > 0)
+            {
+                string fileExt = System.IO.Path.GetExtension(filePath);
+                if (fileExt == ".xlsx" || fileExt == ".xls" || fileExt == ".csv")
+                {
+                    WorkBook workBook = WorkBook.Load(filePath);
+                    WorkSheet workSheet = workBook.WorkSheets.First();
+                    int clubNameCol = 0;
+                    var first = workSheet["A1:Z1"].Rows[0];
+
+                    if (first.Columns.Any(a => a.Value.ToString() == "ClubName"))
+                    {
+                        clubNameCol = first.Columns.Where(w => w.Value.ToString() == "ClubName").Select(c => c.ColumnNumber).FirstOrDefault();
+                    }
+                    foreach (RangeRow row in workSheet.Rows)
+                    {
+                        if (row.Columns[clubNameCol].Value.ToString() == "ClubName")
+                        {
+                            continue;
+                        }
+                        Console.WriteLine("ClubName '{0}'", row.Columns[clubNameCol]);
+                        insertClub(connection, row.Columns[clubNameCol].Value.ToString());
+                    }
+                }
+            }
+        }
+        private static void readInUserCluybPlayersFile(SQLiteConnection connection)
+        {
+            Console.WriteLine("");
+            Console.WriteLine("Please provide the file path to you Club Players file, accepted file types (.xlsx,.xls,.csv) ");
+            string filePath = Console.ReadLine() ?? "";
+            if (filePath.Length > 0)
+            {
+                string fileExt = System.IO.Path.GetExtension(filePath);
+                if (fileExt == ".xlsx" || fileExt == ".xls" || fileExt == ".csv")
+                {
+                    WorkBook workBook = WorkBook.Load(filePath);
+                    WorkSheet workSheet = workBook.WorkSheets.First();
+                    int playerNameCol = 0;
+                    int clubNameCol = 1;
+                    var first = workSheet["A1:Z1"].Rows[0];
+
+                    if (first.Columns.Any(a => a.Value.ToString() == "PlayerName"))
+                    {
+                        playerNameCol = first.Columns.Where(w => w.Value.ToString() == "PlayerName").Select(c => c.ColumnNumber).FirstOrDefault();
+                    }
+                    if (first.Columns.Any(a => a.Value.ToString() == "ClubName"))
+                    {
+                        clubNameCol = first.Columns.Where(w => w.Value.ToString() == "ClubName").Select(c => c.ColumnNumber).FirstOrDefault();
+                    }
+
+                    foreach (RangeRow row in workSheet.Rows)
+                    {
+                        if (row.Columns[playerNameCol].Value.ToString() == "PlayerName" || row.Columns[clubNameCol].Value.ToString() == "ClubName")
+                        {
+                            continue;
+                        }
+                        string playerName = row.Columns[playerNameCol].Value.ToString() ?? "";
+                        string clubName = row.Columns[clubNameCol].Value.ToString() ?? "";
+                        int clubId = -1;
+                        int playerId = -1;
+                        playerId = getPlayerId(connection, playerName);
+                        clubId = getPlayerId(connection, clubName);
+                        Console.WriteLine("PlayerName '{0}', Id:{1} in Club {1} Club Id:{3}", playerName, playerId, clubName, clubId);
+                        insertClubPlayer(connection, playerName, clubName);
+                    }
+                }
+            }
+        }
+
+        private static void insertClub(SQLiteConnection connection, string clubName)
+        {
+            using SQLiteCommand cmdInsertPlayers = connection.CreateCommand();
+            cmdInsertPlayers.Parameters.AddWithValue("clubName", clubName);
+            cmdInsertPlayers.CommandText = @"INSERT OR IGNORE INTO Clubs(ClubName)VALUES(@clubName);";
+            cmdInsertPlayers.ExecuteNonQuery();
+        }
+
+        private static void insertPlayer(SQLiteConnection connection, string playerName, double points, int price)
+        {
+            using SQLiteCommand cmdInsertPlayers = connection.CreateCommand();
+            cmdInsertPlayers.Parameters.AddWithValue("playerName", playerName);
+            cmdInsertPlayers.Parameters.AddWithValue("points", points);
+            cmdInsertPlayers.Parameters.AddWithValue("price", price);
+            cmdInsertPlayers.CommandText = @"INSERT OR IGNORE INTO Players(PlayerName,Points,Price)VALUES(@playerName, @points , @price );";
+            cmdInsertPlayers.ExecuteNonQuery();
+        }
+
+        private static void insertClubPlayer(SQLiteConnection connection, string clubName, string playerName)
+        {
+            int playerId = 0;
+            int clubId = 0;
+
+            using SQLiteCommand cmdViewPlayer = connection.CreateCommand();
+            cmdViewPlayer.CommandText = @"SELECT p.PlayerId,p.PlayerName,p.Price,p.Points FROM Players p where p.PlayerName=" + playerName;
+            using (SQLiteDataReader reader = cmdViewPlayer.ExecuteReader())
+            {
+                while (reader.HasRows && reader.Read())
+                {
+                    playerId = reader.GetInt32(0);
+                    int price = reader.GetInt32(2);
+                    decimal points = reader.GetDecimal(3);
+                    Console.WriteLine("");
+                    Console.WriteLine("Found Player");
+                    Console.WriteLine($"ID: {playerId}, Name:{playerName}, Price:{price}, Points:{points}");
+                }
+            }
+
+            using SQLiteCommand cmdViewClub = connection.CreateCommand();
+            cmdViewClub.CommandText = @"SELECT c.ClubId,c.ClubName FROM Clubs c where c.ClubName=" + clubName;
+            using (SQLiteDataReader reader = cmdViewClub.ExecuteReader())
+            {
+                while (reader.HasRows && reader.Read())
+                {
+                    clubId = reader.GetInt32(0);
+                    Console.WriteLine("");
+                    Console.WriteLine("Found Club");
+                    Console.WriteLine($"ID: {clubId}, Name:{clubName}");
+                }
+            }
+
+            if (playerId == 0 || clubId == 0)
+            {
+                Console.WriteLine("Player not found");
+            }
+            else if (clubId == 0)
+            {
+                Console.WriteLine("Club not found");
+            }
+            else
+            {
+                using SQLiteCommand cmdInsertClubPlayer = connection.CreateCommand();
+                cmdInsertClubPlayer.Parameters.AddWithValue("playerId", playerId);
+                cmdInsertClubPlayer.Parameters.AddWithValue("clubId", clubId);
+                cmdInsertClubPlayer.CommandText = @"INSERT OR IGNORE INTO PlayerClubs(PlayerId,ClubId)VALUES(@playerId, @clubId);";
+                cmdInsertClubPlayer.ExecuteNonQuery();
+            }
+        }
+
         private static void createTables(SQLiteConnection connection)
         {
             try
@@ -604,6 +838,40 @@ INSERT OR IGNORE INTO PlayerClubs(PlayerId,ClubId)VALUES((SELECT PlayerId from P
             using SQLiteCommand cmdDelPlayerFromTeam = connection.CreateCommand();
             cmdDelPlayerFromTeam.CommandText = @"DELETE FROM UserTeam WHERE PlayerId = " + playerId;
             cmdDelPlayerFromTeam.ExecuteNonQuery();
+        }
+
+        private static int getPlayerId(SQLiteConnection connection, string playerName)
+        {
+            using SQLiteCommand cmdGetClubId = connection.CreateCommand();
+            cmdGetClubId.Parameters.AddWithValue("playerName", playerName);
+            cmdGetClubId.CommandText = @"SELECT p.PlayerId FROM Players p WHERE p.PlayerName = @playerName";
+            using (SQLiteDataReader reader = cmdGetClubId.ExecuteReader())
+            {
+                while (reader.HasRows && reader.Read())
+                {
+                    int id = reader.GetInt32(0);
+
+                    return id;
+                }
+            }
+            return -1;
+        }
+
+        private static int getClubId(SQLiteConnection connection, string clubName)
+        {
+            using SQLiteCommand cmdGetClubId = connection.CreateCommand();
+            cmdGetClubId.Parameters.AddWithValue("clubName", clubName);
+            cmdGetClubId.CommandText = @"SELECT c.ClubId FROM Clubs c WHERE c.ClubName = @clubName";
+            using (SQLiteDataReader reader = cmdGetClubId.ExecuteReader())
+            {
+                while (reader.HasRows && reader.Read())
+                {
+                    int id = reader.GetInt32(0);
+
+                    return id;
+                }
+            }
+            return -1;
         }
     }
 }
